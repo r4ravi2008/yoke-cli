@@ -28,7 +28,7 @@ nodes:
       - -c
       - |
         echo "Processing {{ outputs.create_data.result.count }} items"
-        echo "First item: {{ outputs.create_data.result.items[0] }}"
+        echo "Data: {{ json outputs.create_data.result }}"
     
   - id: analyze_with_agent
     kind: task
