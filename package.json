@@ -1,0 +1,33 @@
+{
+  "name": "dagrun",
+  "version": "1.0.0",
+  "description": "TypeScript CLI for running YAML-defined workflow DAGs with LangGraph",
+  "main": "dist/index.js",
+  "bin": {
+    "dagrun": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/cli/index.ts",
+    "start": "node dist/cli/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["workflow", "dag", "cli", "langgraph", "yaml"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@langchain/langgraph": "^0.2.0",
+    "@langchain/core": "^0.3.0",
+    "ajv": "^8.12.0",
+    "chalk": "^4.1.2",
+    "commander": "^11.1.0",
+    "handlebars": "^4.7.8",
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.10.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3"
+  }
+}
