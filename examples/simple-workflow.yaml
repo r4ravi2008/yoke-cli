@@ -1,0 +1,20 @@
+version: 1
+name: Simple Workflow
+concurrency: 6
+vars:
+  message: "Hello from dagrun!"
+
+nodes:
+  - id: step1
+    kind: exec
+    name: Echo message
+    command: echo
+    args: ["{{ vars.message }}"]
+    deterministic: true
+
+  - id: step2
+    kind: exec
+    name: Show step1 output
+    deps: [step1]
+    command: echo
+    args: ["Previous step output:", "{{ outputs.step1.result.stdout }}"]

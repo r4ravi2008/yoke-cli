@@ -1,5 +1,5 @@
 import { promises as fs } from 'fs';
-import * as yaml from 'yaml';
+import * as yaml from 'js-yaml';
 import chalk from 'chalk';
 import { WorkflowDefinition } from '../../schema/types';
 import { validateWorkflow } from '../../schema/validator';

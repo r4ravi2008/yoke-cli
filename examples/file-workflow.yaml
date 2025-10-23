@@ -1,0 +1,40 @@
+version: 1
+name: File Workflow with Output Passing
+concurrency: 6
+vars:
+  output_file: "output.json"
+
+nodes:
+  - id: create_data
+    kind: exec
+    name: Create JSON data file
+    command: bash
+    args:
+      - -c
+      - |
+        echo '{"count": 5, "items": ["apple", "banana", "cherry", "date", "elderberry"]}' > {{ vars.output_file }}
+    produces:
+      files: ["{{ vars.output_file }}"]
+      json:
+        resultFromFile: "{{ vars.output_file }}"
+    deterministic: true
+
+  - id: process_data
+    kind: exec
+    name: Process data from previous step
+    deps: [create_data]
+    command: bash
+    args:
+      - -c
+      - |
+        echo "Processing {{ outputs.create_data.result.count }} items"
+        echo "First item: {{ outputs.create_data.result.items[0] }}"
+    
+  - id: analyze_with_agent
+    kind: task
+    name: Analyze data with cursor agent
+    deps: [create_data]
+    agent: cursor
+    prompt: "Analyze this data and provide insights: {{ json outputs.create_data.result }}"
+    inputs:
+      data: "{{ outputs.create_data.result }}"
