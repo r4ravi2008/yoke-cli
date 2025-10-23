@@ -52,6 +52,14 @@ function renderObjectRecursive<T>(
   handlebars: typeof Handlebars
 ): T {
   if (typeof obj === 'string') {
+    const trimmed = obj.trim();
+    if (trimmed.startsWith('{{') && trimmed.endsWith('}}')) {
+      const expression = trimmed.slice(2, -2).trim();
+      const value = resolveExpression(expression, context);
+      if (value !== undefined) {
+        return value as T;
+      }
+    }
     const compiled = handlebars.compile(obj);
     return compiled(context) as T;
   }
@@ -69,4 +77,18 @@ function renderObjectRecursive<T>(
   }
 
   return obj;
+}
+
+function resolveExpression(expression: string, context: Record<string, unknown>): unknown {
+  const parts = expression.split('.');
+  let current: any = context;
+  
+  for (const part of parts) {
+    if (current === null || current === undefined) {
+      return undefined;
+    }
+    current = current[part];
+  }
+  
+  return current;
 }

@@ -53,22 +53,23 @@ export class WorkflowRuntime {
 
     const completed = new Set<string>();
     const failed = new Set<string>();
+    const skipped = new Set<string>();
 
-    while (completed.size + failed.size < this.workflow.nodes.length) {
+    while (completed.size + failed.size + skipped.size < this.workflow.nodes.length) {
       const ready: string[] = [];
 
       for (const node of this.workflow.nodes) {
-        if (completed.has(node.id) || failed.has(node.id)) continue;
+        if (completed.has(node.id) || failed.has(node.id) || skipped.has(node.id)) continue;
         if (this.state.statuses[node.id] === 'RUNNING') continue;
 
         const deps = nodeDeps.get(node.id) || [];
         const allDepsComplete = deps.every((dep) => completed.has(dep));
-        const anyDepFailed = deps.some((dep) => failed.has(dep));
+        const anyDepFailed = deps.some((dep) => failed.has(dep) || skipped.has(dep));
 
         if (anyDepFailed) {
           this.state.statuses[node.id] = 'SKIPPED';
           await this.ctx.runStore.setNodeStatus(node.id, 'SKIPPED');
-          failed.add(node.id);
+          skipped.add(node.id);
           continue;
         }
 
@@ -78,6 +79,15 @@ export class WorkflowRuntime {
       }
 
       if (ready.length === 0) {
+        const pending = this.workflow.nodes.filter(
+          (node) => !completed.has(node.id) && !failed.has(node.id) && !skipped.has(node.id)
+        );
+        if (pending.length > 0) {
+          await this.ctx.runStore.complete('failed');
+          throw new Error(
+            `Workflow deadlock detected. Nodes still pending but none are ready: ${pending.map((n) => n.id).join(', ')}`
+          );
+        }
         break;
       }
 
@@ -93,7 +103,9 @@ export class WorkflowRuntime {
 
     if (failed.size > 0) {
       await this.ctx.runStore.complete('failed');
-      throw new Error(`Workflow failed: ${Array.from(failed).join(', ')} failed`);
+      const failedNodes = Array.from(failed).join(', ');
+      const skippedNodes = skipped.size > 0 ? ` (${skipped.size} skipped)` : '';
+      throw new Error(`Workflow failed: ${failedNodes} failed${skippedNodes}`);
     }
 
     await this.ctx.runStore.complete('success');

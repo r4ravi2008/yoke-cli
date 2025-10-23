@@ -1,0 +1,18 @@
+version: 1
+name: Deadlock Test Workflow
+concurrency: 6
+
+nodes:
+  - id: step1
+    kind: exec
+    name: First step
+    deps: [step2]
+    command: echo
+    args: ["This will deadlock"]
+
+  - id: step2
+    kind: exec
+    name: Second step
+    deps: [step1]
+    command: echo
+    args: ["This will deadlock too"]

@@ -190,7 +190,10 @@ npm run dev -- run examples/simple-workflow.yaml
   - Core workflow runtime with sequential execution
   - Exec and task step types
   - Deterministic caching with SHA-256 hashing
-  - Output passing via Handlebars templating
+  - **Fixed:** Object passing - structured outputs (JSON, objects) now pass correctly between nodes
+  - **Fixed:** Deadlock detection - runtime detects and reports circular dependencies
+  - **Fixed:** Skipped node handling - nodes with failed dependencies are properly marked as SKIPPED
+  - Output passing via Handlebars templating with smart type preservation
   - CLI commands: run, validate, plan, show
   - Agent registry with stub implementations
   - RunStore and CacheStore for persistence
