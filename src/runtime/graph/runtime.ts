@@ -5,7 +5,7 @@ import { runTask } from '../steps/task';
 import { AgentRegistry } from '../agents/registry';
 import { CacheStore } from '../store/cache-store';
 import { RunStore } from '../store/run-store';
-import { createTemplateEngine } from '../templating/engine';
+import { createTemplateEngine } from '../../templating/engine';
 
 export interface RuntimeContext {
   agentRegistry: AgentRegistry;

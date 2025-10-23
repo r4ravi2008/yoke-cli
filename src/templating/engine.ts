@@ -1,6 +1,6 @@
-import Handlebars from 'handlebars';
+import * as Handlebars from 'handlebars';
 import { promises as fs } from 'fs';
-import path from 'path';
+import * as path from 'path';
 
 export function createTemplateEngine(context: {
   vars: Record<string, unknown>;
