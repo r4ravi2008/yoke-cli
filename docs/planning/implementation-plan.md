@@ -102,7 +102,7 @@ The DagRun project has successfully completed **Phase 1 (Foundations)**, **Phase
 **Goal**: Align implementation with design specification
 
 - [x] **B.1** LangGraph Integration (major refactor) - ✅ **COMPLETED 2025-10-23**
-- [ ] **B.2** Resume Functionality with Checkpointing
+- [ ] **B.2** Resume Functionality with Checkpointing - 🔄 **IN PROGRESS** (LangGraph-native approach)
 
 ### Phase C: Testing (Week 4)
 **Goal**: Establish comprehensive test coverage
@@ -129,7 +129,7 @@ The DagRun project has successfully completed **Phase 1 (Foundations)**, **Phase
 | **A.3: --only Flag** | 🟡 Medium | Not Started | None | Low | Modify: `src/runtime/graph/runtime.ts`, `src/cli/commands/run.ts` | Validate transitive dependencies are included. |
 | **A.4: --since-cache Flag** | 🟡 Medium | Not Started | None | Medium | Modify: `src/runtime/graph/runtime.ts`, `src/runtime/store/cache-store.ts`, `src/cli/commands/run.ts` | Track dependency digests to determine cache validity. |
 | **B.1: LangGraph Integration** | 🔴 High | ✅ Complete | None | High | Create: `src/runtime/graph/buildGraph.ts`, `src/runtime/graph/nodes.ts`<br>Modify: `src/runtime/graph/runtime.ts`, `src/runtime/graph/state.ts` | Major architectural change. Migrate from custom loop to StateGraph. **COMPLETED 2025-10-23**. See [`docs/langgraph-integration-summary.md`](./langgraph-integration-summary.md) for details. |
-| **B.2: Resume/Checkpointing** | 🟡 Medium | Not Started | B.1 ✅ | Medium-High | Create: `src/runtime/store/checkpointer.ts`<br>Modify: `src/runtime/graph/buildGraph.ts`, `src/cli/commands/run.ts` | Requires LangGraph checkpointer interface. SQLite backend. **Now unblocked - B.1 complete**. |
+| **B.2: Resume/Checkpointing** | 🔴 High | 🔄 In Progress | B.1 ✅ | Medium | Modify: `src/runtime/graph/buildGraph.ts`, `src/runtime/graph/runtime.ts`, `src/runtime/store/run-store.ts`, `src/cli/commands/run.ts`<br>Create: `test/integration/resume.test.ts` | **LangGraph-native approach**: Leverage built-in checkpointing (SqliteSaver). Simple configuration vs custom implementation. See [`docs/resume-implementation-plan.md`](./resume-implementation-plan.md). **Now unblocked - B.1 complete**. Est. 5-6 hours. |
 | **C.1: Unit Tests** | 🟡 Medium | ✅ Complete | None | Medium | Create: `test/unit/state.test.ts`, `test/unit/buildGraph.test.ts`<br>Modify: `package.json`, `jest.config.js` | Jest configured. 7 unit tests passing. **COMPLETED 2025-10-23**. |
 | **C.2: E2E Tests** | 🟢 Low-Med | ✅ Complete | C.1 ✅ | Medium | Create: `test/integration/simple-workflow.test.ts`<br>Config: `jest.config.js` | 10 integration tests covering workflows, dependencies, caching, failures. **COMPLETED 2025-10-23**. |
 | **C.3: Deterministic Tests** | 🟢 Low-Med | ✅ Partial | C.1 ✅ | Low-Medium | Included in `test/integration/simple-workflow.test.ts` | Cache verification tests included in integration suite. Additional coverage can be added. |
@@ -147,7 +147,10 @@ The DagRun project has successfully completed **Phase 1 (Foundations)**, **Phase
 3. ~~**E2E Tests (C.2)**~~ - ✅ 10 integration tests passing
 
 ### 🎯 Next Steps (Recommended Order)
-4. **Resume Functionality (B.2)** - **NOW UNBLOCKED** - Depends on LangGraph (complete)
+4. **Resume Functionality (B.2)** - 🔄 **IN PROGRESS** - LangGraph-native approach (5-6 hours)
+   - Leverage LangGraph's built-in SqliteSaver checkpointer
+   - Simple configuration vs custom implementation
+   - See detailed plan: [`docs/resume-implementation-plan.md`](./resume-implementation-plan.md)
 5. **Retry and Backoff Logic (A.1)** - Critical for production reliability, independent feature
 6. **Global Concurrency Control (A.2)** - Needed for proper resource management
 7. **Selective Node Execution (A.3)** - Useful for development and debugging
@@ -266,14 +269,15 @@ The DagRun project has successfully completed **Phase 1 (Foundations)**, **Phase
 - ✅ **Production-ready architecture** (router-based execution, proper error handling)
 
 ### Key Weaknesses (Remaining)
-- ❌ Missing production features (retry, resume, concurrency control)
+- ❌ Missing production features (retry, concurrency control)
+- 🔄 Resume functionality (in progress - using LangGraph-native approach)
 - ❌ Agent implementations are stubs only
 - ❌ No TUI progress display
 - ❌ Limited test coverage for templating and caching
 
 ### Risk Areas
 - ~~**LangGraph Migration**~~: ✅ **COMPLETED** - Successfully migrated with no breaking changes
-- **Checkpointing**: Complex feature, ✅ **now unblocked** by LangGraph integration (B.1 complete)
+- **Checkpointing**: ✅ **LOW RISK** - Using LangGraph's built-in SqliteSaver (battle-tested)
 - **Concurrency Control**: Need to ensure no race conditions or deadlocks
 
 ### Future Enhancements (Beyond Current Scope)

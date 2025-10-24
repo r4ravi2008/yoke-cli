@@ -12,13 +12,19 @@ Data passing: outputs saved as structured JSON + artifacts; later steps can temp
 
 CLI: dagrun run workflow.yaml, with options for concurrency, resume, dry-run, and selective node execution.
 
+Checkpointing: All workflow runs automatically save checkpoints to SQLite database for resume capability.
+
 CLI UX
 
-# Run a workflow
+# Run a workflow (checkpoints saved automatically)
 
-dagrun run ./workflow.yaml --concurrency 6 --out ./.runs/2025-10-22_15-03 --resume
+dagrun run ./workflow.yaml --concurrency 6 --out ./.runs/2025-10-22_15-03
 
-# Target a subset
+# Resume a failed workflow
+
+dagrun run ./workflow.yaml --resume --out ./.runs/2025-10-22_15-03
+
+# Target a subset (future)
 
 dagrun run ./workflow.yaml --only prep,fanout --since-cache
 
@@ -140,11 +146,11 @@ templating/: Handlebars instance with helpers resolving vars, outputs, files, pa
 
 runtime/store/:
 
-RunStore: persist run.json, node status, timings, outputs.
+RunStore: persist run.json, node status, timings, outputs, thread ID for checkpointing.
 
 CacheStore: content-addressable store keyed by input hash (inputs + prompt + env + command + deps digests).
 
-Checkpoint: optional LangGraph checkpointer (Memory by default; SQLite for resume).
+Checkpointer: LangGraph SqliteSaver for automatic state persistence and resume. Stored in `<run-dir>/checkpoints.db`.
 
 runtime/agents/: common Agent interface and adapters (Cursor CLI, Augie, Cloud Code). Each adapter runs the tool/CLI or API and returns { result, logs, createdArtifacts }.
 
@@ -191,7 +197,116 @@ Edges: deps → edges. Nodes with no deps connect from START. Nodes with no depe
 
 Parallelism: LangGraph will schedule independent nodes; each node handler avoids blocking and uses async concurrency (e.g., Promise.all in map).
 
-Checkpoints/Resume: use LangGraph checkpointer (memory by default; optional SQLite) to resume mid-run.
+Checkpoints/Resume: LangGraph provides built-in checkpointing for workflow persistence and resume capabilities.
+
+## Checkpointing & Resume
+
+DagRun leverages LangGraph's native checkpointing system for workflow persistence and resume functionality. This is a first-class feature that enables fault-tolerance, human-in-the-loop workflows, and time travel debugging.
+
+### How It Works
+
+1. **Checkpointer Setup**: Initialize a SqliteSaver checkpointer with a database path
+   ```typescript
+   import { SqliteSaver } from '@langchain/langgraph-checkpoint-sqlite';
+
+   const checkpointer = SqliteSaver.fromConnString('./run-dir/checkpoints.db');
+   await checkpointer.setup();
+   ```
+
+2. **Graph Compilation**: Pass checkpointer to graph.compile()
+   ```typescript
+   const graph = buildGraphFromWorkflow(workflow, ctx, checkpointer);
+   // Internally: graph.compile({ checkpointer })
+   ```
+
+3. **Execution with Thread ID**: Invoke graph with a unique thread_id
+   ```typescript
+   await graph.invoke(initialState, {
+     configurable: { thread_id: 'run-abc123' }
+   });
+   ```
+
+   LangGraph automatically:
+   - Saves state after each super-step
+   - Associates checkpoints with the thread_id
+   - Persists to SQLite database
+
+4. **Resume**: Re-invoke with same thread_id and null initial state
+   ```typescript
+   await graph.invoke(null, {  // null = load from checkpoint
+     configurable: { thread_id: 'run-abc123' }
+   });
+   ```
+
+   LangGraph automatically:
+   - Loads last checkpoint for thread_id
+   - Skips completed nodes
+   - Continues from failure point
+   - Saves new checkpoints as execution progresses
+
+### Thread ID Strategy
+
+- **Unique per run**: Each workflow run gets a unique thread_id (e.g., `run-1729701234-x7k9m2p`)
+- **Stored in run.json**: Thread ID is persisted in run metadata for resume
+- **Namespace**: Allows multiple runs to coexist in same checkpoint database
+- **Immutable**: Thread ID never changes for a given run
+
+### Checkpoint Storage
+
+- **Location**: `<run-dir>/checkpoints.db` (SQLite database)
+- **Format**: LangGraph's internal checkpoint format (serialized state)
+- **Persistence**: Checkpoints remain after workflow completion for debugging/time-travel
+- **Size**: ~1KB per checkpoint (incremental state changes only)
+
+### Resume Workflow
+
+```bash
+# Initial run (fails at step 2)
+dagrun run workflow.yaml --out .runs/my-run
+
+# Resume from failure
+dagrun run workflow.yaml --resume --out .runs/my-run
+```
+
+The resume process:
+1. Loads run.json to get thread_id
+2. Initializes checkpointer with existing checkpoints.db
+3. Compiles graph with checkpointer
+4. Invokes with thread_id and null state
+5. LangGraph loads checkpoint and continues execution
+
+### State Inspection (Bonus Features)
+
+LangGraph provides additional capabilities beyond basic resume:
+
+**Get Current State**:
+```typescript
+const state = await graph.getState({ configurable: { thread_id } });
+console.log(state.values);    // Current state
+console.log(state.next);      // Next nodes to execute
+console.log(state.tasks);     // Pending tasks
+```
+
+**View State History**:
+```typescript
+for await (const state of graph.getStateHistory({ configurable: { thread_id } })) {
+  console.log(state.values);  // Historical checkpoints
+}
+```
+
+**Resume from Specific Checkpoint** (Time Travel):
+```typescript
+await graph.invoke(null, {
+  configurable: {
+    thread_id: 'run-abc123',
+    checkpoint_id: '1ef663ba-28fe-6528-8002-5a559208592c'
+  }
+});
+```
+
+### Implementation Details
+
+See [`docs/resume-implementation-plan.md`](./resume-implementation-plan.md) for complete implementation details.
 
 Deterministic steps
 
@@ -233,7 +348,7 @@ Artifact management; run manifest (run.json) + JSONL log.
 
 Phase 4 — Ops polish (week 4)
 
-Resume with checkpointer (SQLite option).
+Resume with checkpointer (SQLite) - ✅ **IMPLEMENTED** using LangGraph's native SqliteSaver.
 
 TUI progress, dagrun show, plan, validate.
 

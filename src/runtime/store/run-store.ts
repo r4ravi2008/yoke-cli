@@ -4,6 +4,8 @@ import { NodeOutput, NodeStatus } from '../graph/state';
 
 export interface RunMetadata {
   workflowName: string;
+  threadId: string;
+  checkpointDbPath: string;
   startTime: string;
   endTime?: string;
   status: 'running' | 'success' | 'failed';
@@ -21,14 +23,22 @@ export class RunStore {
   private runDir: string;
   private metadata: RunMetadata;
 
-  constructor(runDir: string, workflowName: string) {
+  constructor(runDir: string, workflowName: string, threadId?: string) {
     this.runDir = runDir;
     this.metadata = {
       workflowName,
+      threadId: threadId || this.generateThreadId(),
+      checkpointDbPath: path.join(runDir, 'checkpoints.db'),
       startTime: new Date().toISOString(),
       status: 'running',
       nodes: {},
     };
+  }
+
+  private generateThreadId(): string {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substr(2, 9);
+    return `run-${timestamp}-${random}`;
   }
 
   async init(): Promise<void> {
@@ -78,6 +88,8 @@ export class RunStore {
   }
 
   async save(): Promise<void> {
+    // Ensure directory exists before saving
+    await fs.mkdir(this.runDir, { recursive: true });
     const runFile = path.join(this.runDir, 'run.json');
     await fs.writeFile(runFile, JSON.stringify(this.metadata, null, 2));
   }
@@ -97,9 +109,27 @@ export class RunStore {
     return this.metadata;
   }
 
+  getThreadId(): string {
+    return this.metadata.threadId;
+  }
+
+  getCheckpointDbPath(): string {
+    return this.metadata.checkpointDbPath;
+  }
+
   static async load(runDir: string): Promise<RunMetadata> {
     const runFile = path.join(runDir, 'run.json');
     const content = await fs.readFile(runFile, 'utf8');
     return JSON.parse(content);
+  }
+
+  static async loadForResume(runDir: string): Promise<RunStore> {
+    const metadata = await RunStore.load(runDir);
+    const store = new RunStore(runDir, metadata.workflowName, metadata.threadId);
+    store.metadata = metadata;
+    // Ensure directory structure exists (in case it was deleted)
+    await fs.mkdir(runDir, { recursive: true });
+    await fs.mkdir(path.join(runDir, 'artifacts'), { recursive: true });
+    return store;
   }
 }

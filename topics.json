@@ -1,0 +1,6 @@
+["AI", "Cloud Computing", "Blockchain"]
+
+
+cursor-agent -p --force "Provide a brief analysis of AI technology trends"
+cursor-agent -p --force "Provide a brief analysis of Cloud Computing technology trends"
+cursor-agent -p --force "Provide a brief analysis of Blockchain technology trends

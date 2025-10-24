@@ -1,169 +1,163 @@
-import { WorkflowDefinition, NodeDefinition, ExecNode, TaskNode } from '../../schema/types';
-import { NodeOutput, NodeStatus } from './state';
-import { runExec } from '../steps/exec';
-import { runTask } from '../steps/task';
+import { BaseCheckpointSaver } from '@langchain/langgraph';
+import { WorkflowDefinition } from '../../schema/types';
+import { createInitialState } from './state';
+import { buildGraphFromWorkflow } from './buildGraph';
 import { AgentRegistry } from '../agents/registry';
 import { CacheStore } from '../store/cache-store';
 import { RunStore } from '../store/run-store';
-import { createTemplateEngine } from '../../templating/engine';
 
+/**
+ * Runtime context containing stores and configuration
+ */
 export interface RuntimeContext {
   agentRegistry: AgentRegistry;
   cacheStore: CacheStore;
   runStore: RunStore;
+  checkpointer?: BaseCheckpointSaver;  // Optional checkpointer for resume
+  threadId?: string;  // Thread ID for resume (if resuming existing run)
   verbose?: boolean;
 }
 
+/**
+ * WorkflowRuntime orchestrates workflow execution using LangGraph.
+ *
+ * This class builds a LangGraph StateGraph from the workflow definition
+ * and executes it, handling state management, node execution, and error handling.
+ */
 export class WorkflowRuntime {
   private workflow: WorkflowDefinition;
   private ctx: RuntimeContext;
-  private state: {
-    vars: Record<string, unknown>;
-    outputs: Record<string, NodeOutput>;
-    statuses: Record<string, NodeStatus>;
-  };
 
   constructor(workflow: WorkflowDefinition, ctx: RuntimeContext) {
     this.workflow = workflow;
     this.ctx = ctx;
-    this.state = {
-      vars: workflow.vars || {},
-      outputs: {},
-      statuses: {},
-    };
   }
 
-  private log(nodeId: string, msg: string): void {
-    if (this.ctx.verbose) {
-      console.log(`[${nodeId}] ${msg}`);
-    }
-  }
-
+  /**
+   * Execute the workflow using LangGraph.
+   *
+   * This method:
+   * 1. Creates initial state from workflow vars (or loads from checkpoint if resuming)
+   * 2. Builds a LangGraph StateGraph from the workflow definition
+   * 3. Invokes the graph to execute the workflow
+   * 4. Handles success/failure and updates run store
+   */
   async run(): Promise<void> {
-    const nodeMap = new Map<string, NodeDefinition>();
-    this.workflow.nodes.forEach((node) => {
-      nodeMap.set(node.id, node);
-      this.state.statuses[node.id] = 'PENDING';
-    });
+    // Get thread ID (from context if resuming, or from run store if new)
+    const threadId = this.ctx.threadId || this.ctx.runStore.getThreadId();
+    const isResume = !!this.ctx.threadId;
 
-    const nodeDeps = new Map<string, string[]>();
-    this.workflow.nodes.forEach((node) => {
-      nodeDeps.set(node.id, node.deps || []);
-    });
+    // Build the LangGraph from workflow definition with checkpointer
+    const graph = buildGraphFromWorkflow(
+      this.workflow,
+      {
+        agentRegistry: this.ctx.agentRegistry,
+        cacheStore: this.ctx.cacheStore,
+        runStore: this.ctx.runStore,
+        verbose: this.ctx.verbose,
+      },
+      this.ctx.checkpointer
+    );
 
-    const completed = new Set<string>();
-    const failed = new Set<string>();
-    const skipped = new Set<string>();
+    let initialState;
 
-    while (completed.size + failed.size + skipped.size < this.workflow.nodes.length) {
-      const ready: string[] = [];
-
+    if (!isResume) {
+      // NEW RUN: Initialize all node statuses to PENDING
+      const initialStatuses: Record<string, 'PENDING'> = {};
       for (const node of this.workflow.nodes) {
-        if (completed.has(node.id) || failed.has(node.id) || skipped.has(node.id)) continue;
-        if (this.state.statuses[node.id] === 'RUNNING') continue;
-
-        const deps = nodeDeps.get(node.id) || [];
-        const allDepsComplete = deps.every((dep) => completed.has(dep));
-        const anyDepFailed = deps.some((dep) => failed.has(dep) || skipped.has(dep));
-
-        if (anyDepFailed) {
-          this.state.statuses[node.id] = 'SKIPPED';
-          await this.ctx.runStore.setNodeStatus(node.id, 'SKIPPED');
-          skipped.add(node.id);
-          continue;
-        }
-
-        if (allDepsComplete) {
-          ready.push(node.id);
-        }
+        initialStatuses[node.id] = 'PENDING';
+        await this.ctx.runStore.setNodeStatus(node.id, 'PENDING');
       }
 
-      if (ready.length === 0) {
-        const pending = this.workflow.nodes.filter(
-          (node) => !completed.has(node.id) && !failed.has(node.id) && !skipped.has(node.id)
-        );
-        if (pending.length > 0) {
-          await this.ctx.runStore.complete('failed');
-          throw new Error(
-            `Workflow deadlock detected. Nodes still pending but none are ready: ${pending.map((n) => n.id).join(', ')}`
-          );
-        }
-        break;
+      // Create initial state
+      initialState = createInitialState(this.workflow.vars || {});
+      initialState.statuses = initialStatuses;
+    } else {
+      // RESUME: Load state from checkpoint and reset failed nodes
+      if (!this.ctx.checkpointer) {
+        throw new Error('Cannot resume without a checkpointer');
       }
 
-      for (const nodeId of ready) {
-        try {
-          await this.executeNode(nodeId);
-          completed.add(nodeId);
-        } catch (error) {
-          failed.add(nodeId);
+      if (this.ctx.verbose) {
+        console.log(`[Resume] Resuming from checkpoint for thread: ${threadId}`);
+      }
+
+      // Get the current state from the checkpoint
+      const checkpointState = await graph.getState({
+        configurable: { thread_id: threadId },
+      } as any);
+
+      if (checkpointState && checkpointState.values) {
+        // Reset FAILED and SKIPPED nodes to PENDING so they can be re-executed
+        const statusUpdates: Record<string, 'PENDING'> = {};
+        for (const [nodeId, status] of Object.entries(checkpointState.values.statuses || {})) {
+          if (status === 'FAILED' || status === 'SKIPPED') {
+            statusUpdates[nodeId] = 'PENDING';
+            await this.ctx.runStore.setNodeStatus(nodeId, 'PENDING');
+            if (this.ctx.verbose) {
+              console.log(`[Resume] Resetting ${status.toLowerCase()} node ${nodeId} to PENDING`);
+            }
+          }
         }
+
+        // Create initial state from checkpoint with updated statuses
+        // Clear the failed field since we're resetting failed nodes
+        initialState = {
+          ...checkpointState.values,
+          statuses: {
+            ...checkpointState.values.statuses,
+            ...statusUpdates,
+          },
+          failed: undefined,  // Clear failed state when resuming
+        };
+      } else {
+        // No checkpoint found, start fresh
+        initialState = null;
       }
     }
-
-    if (failed.size > 0) {
-      await this.ctx.runStore.complete('failed');
-      const failedNodes = Array.from(failed).join(', ');
-      const skippedNodes = skipped.size > 0 ? ` (${skipped.size} skipped)` : '';
-      throw new Error(`Workflow failed: ${failedNodes} failed${skippedNodes}`);
-    }
-
-    await this.ctx.runStore.complete('success');
-  }
-
-  private async executeNode(nodeId: string): Promise<void> {
-    const node = this.workflow.nodes.find((n) => n.id === nodeId);
-    if (!node) throw new Error(`Node ${nodeId} not found`);
 
     try {
-      await this.ctx.runStore.setNodeStatus(nodeId, 'RUNNING');
-      this.state.statuses[nodeId] = 'RUNNING';
-      this.log(nodeId, `Starting node ${node.name || nodeId}`);
+      // Execute the graph
+      // Pass initialState (either from checkpoint with reset failed nodes, or fresh initial state)
+      // Pass config with thread_id for checkpointing
+      const finalState = await graph.invoke(initialState, {
+        configurable: { thread_id: threadId },
+      } as any);
 
-      const templateEngine = createTemplateEngine({
-        vars: this.state.vars,
-        outputs: this.state.outputs,
-      });
+      // Check for failures
+      if (finalState.failed) {
+        await this.ctx.runStore.complete('failed');
+        const failedNode = finalState.failed.nodeId;
+        const error = finalState.failed.error;
 
-      const resolvedNode = templateEngine.renderObject(node);
+        // Count skipped nodes
+        const skippedCount = Object.values(finalState.statuses).filter(
+          (s) => s === 'SKIPPED'
+        ).length;
+        const skippedMsg = skippedCount > 0 ? ` (${skippedCount} skipped)` : '';
 
-      let output: NodeOutput;
-
-      if (resolvedNode.kind === 'exec') {
-        output = await runExec(resolvedNode as ExecNode, {
-          cacheGet: (key) => this.ctx.cacheStore.get(key),
-          cachePut: (key, val) => this.ctx.cacheStore.put(key, val),
-          log: (msg) => this.log(nodeId, msg),
-        });
-      } else if (resolvedNode.kind === 'task') {
-        const taskNode = resolvedNode as TaskNode;
-        const agent = this.ctx.agentRegistry.get(taskNode.agent);
-        if (!agent) {
-          throw new Error(`Agent ${taskNode.agent} not found`);
-        }
-        output = await runTask(agent, taskNode, {
-          cacheGet: (key) => this.ctx.cacheStore.get(key),
-          cachePut: (key, val) => this.ctx.cacheStore.put(key, val),
-          writeArtifact: (rel, data) => this.ctx.runStore.writeArtifact(rel, data),
-          log: (msg) => this.log(nodeId, msg),
-        });
-      } else {
-        throw new Error(`Unsupported node kind: ${resolvedNode.kind}`);
+        throw new Error(`Workflow failed: ${failedNode} failed: ${error}${skippedMsg}`);
       }
 
-      this.state.outputs[nodeId] = output;
-      this.state.statuses[nodeId] = output.cached ? 'CACHED' : 'SUCCESS';
+      // Check if any nodes failed
+      const failedNodes = Object.entries(finalState.statuses)
+        .filter(([_, status]) => status === 'FAILED')
+        .map(([nodeId, _]) => nodeId);
 
-      await this.ctx.runStore.setNodeOutput(nodeId, output);
-      await this.ctx.runStore.setNodeStatus(nodeId, output.cached ? 'CACHED' : 'SUCCESS');
+      if (failedNodes.length > 0) {
+        await this.ctx.runStore.complete('failed');
+        const skippedCount = Object.values(finalState.statuses).filter(
+          (s) => s === 'SKIPPED'
+        ).length;
+        const skippedMsg = skippedCount > 0 ? ` (${skippedCount} skipped)` : '';
+        throw new Error(`Workflow failed: ${failedNodes.join(', ')} failed${skippedMsg}`);
+      }
 
-      this.log(nodeId, `Completed successfully`);
+      // Success!
+      await this.ctx.runStore.complete('success');
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.log(nodeId, `Failed: ${errorMsg}`);
-      this.state.statuses[nodeId] = 'FAILED';
-      await this.ctx.runStore.setNodeError(nodeId, errorMsg);
-      await this.ctx.runStore.setNodeStatus(nodeId, 'FAILED');
+      // Ensure run store is marked as failed
+      await this.ctx.runStore.complete('failed');
       throw error;
     }
   }

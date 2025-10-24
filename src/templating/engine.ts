@@ -5,6 +5,7 @@ import * as path from 'path';
 export function createTemplateEngine(context: {
   vars: Record<string, unknown>;
   outputs: Record<string, unknown>;
+  item?: unknown;
 }) {
   const handlebars = Handlebars.create();
 

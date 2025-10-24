@@ -1,0 +1,59 @@
+version: 1
+name: Map-Reduce with Agent Tasks
+concurrency: 6
+vars:
+  topics_file: "topics.json"
+
+nodes:
+  # Step 1: Create a list of topics to analyze
+  - id: create_topics
+    kind: exec
+    name: Create list of topics
+    command: bash
+    args:
+      - -c
+      - |
+        echo '["AI", "Cloud Computing", "Blockchain"]' > {{ vars.topics_file }}
+    produces:
+      files: ["{{ vars.topics_file }}"]
+      json:
+        resultFromFile: "{{ vars.topics_file }}"
+    deterministic: true
+
+  # Step 2: Map - Analyze each topic with an agent
+  - id: analyze_topics
+    kind: map
+    name: Analyze each topic with cursor agent
+    deps: [create_topics]
+    over: "{{ outputs.create_topics.result }}"
+    map:
+      kind: task
+      agent: cursor
+      prompt: "Provide a brief analysis of {{ item }} technology trends"
+      inputs:
+        topic: "{{ item }}"
+
+  # Step 3: Reduce - Combine all analyses
+  - id: combine_analyses
+    kind: reduce
+    name: Combine all topic analyses
+    deps: [analyze_topics]
+    reduce:
+      kind: task
+      agent: augie
+      prompt: "Summarize the following technology analyses into a cohesive report"
+      inputs:
+        analyses: "{{ outputs.analyze_topics.result }}"
+
+  # Step 4: Display final result
+  - id: display_result
+    kind: exec
+    name: Display final result
+    deps: [combine_analyses]
+    command: bash
+    args:
+      - -c
+      - |
+        echo "Analysis complete!"
+        echo "Combined report: {{ json outputs.combine_analyses.result }}"
+

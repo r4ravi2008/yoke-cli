@@ -5,6 +5,7 @@ import { runCommand } from './commands/run';
 import { validateCommand } from './commands/validate';
 import { planCommand } from './commands/plan';
 import { showCommand } from './commands/show';
+import { visualizeCommand } from './commands/visualize';
 
 const program = new Command();
 
@@ -70,6 +71,24 @@ program
   .action(async (options) => {
     try {
       await showCommand(options);
+    } catch (error) {
+      console.error('Error:', error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  });
+
+program
+  .command('visualize')
+  .description('Visualize the workflow graph structure')
+  .argument('<workflow>', 'Path to workflow YAML file')
+  .option('-o, --output <file>', 'Output file path (for mermaid or png formats)')
+  .option('-f, --format <format>', 'Output format: mermaid, png, or ascii', 'mermaid')
+  .action(async (workflow, options) => {
+    try {
+      await visualizeCommand(workflow, {
+        output: options.output,
+        format: options.format,
+      });
     } catch (error) {
       console.error('Error:', error instanceof Error ? error.message : String(error));
       process.exit(1);

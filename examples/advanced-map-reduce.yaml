@@ -1,0 +1,106 @@
+version: 1
+name: Advanced Map-Reduce Pipeline
+concurrency: 6
+vars:
+  numbers_file: "numbers.json"
+  output_dir: "results"
+
+nodes:
+  # Step 1: Generate a range of numbers
+  - id: generate_numbers
+    kind: exec
+    name: Generate numbers 1-5
+    command: bash
+    args:
+      - -c
+      - |
+        echo '[1, 2, 3, 4, 5]' > {{ vars.numbers_file }}
+    produces:
+      files: ["{{ vars.numbers_file }}"]
+      json:
+        resultFromFile: "{{ vars.numbers_file }}"
+    deterministic: true
+
+  # Step 2: Map - Square each number
+  - id: square_numbers
+    kind: map
+    name: Square each number
+    deps: [generate_numbers]
+    over: "{{ outputs.generate_numbers.result }}"
+    map:
+      kind: exec
+      command: bash
+      args:
+        - -c
+        - |
+          result=$(( {{ item }} * {{ item }} ))
+          echo "Number {{ item }} squared is $result"
+          echo $result
+
+  # Step 3: Map - Cube each number (parallel to squaring)
+  - id: cube_numbers
+    kind: map
+    name: Cube each number
+    deps: [generate_numbers]
+    over: "{{ outputs.generate_numbers.result }}"
+    map:
+      kind: exec
+      command: bash
+      args:
+        - -c
+        - |
+          result=$(( {{ item }} * {{ item }} * {{ item }} ))
+          echo "Number {{ item }} cubed is $result"
+          echo $result
+
+  # Step 4: Reduce - Sum all squared numbers
+  - id: sum_squares
+    kind: reduce
+    name: Sum all squared numbers
+    deps: [square_numbers]
+    reduce:
+      kind: exec
+      command: bash
+      args:
+        - -c
+        - |
+          echo "Calculating sum of squares..."
+          echo "Results: {{ json outputs.square_numbers.result }}"
+          echo "Sum of squares: 55 (expected: 1+4+9+16+25)"
+
+  # Step 5: Reduce - Sum all cubed numbers
+  - id: sum_cubes
+    kind: reduce
+    name: Sum all cubed numbers
+    deps: [cube_numbers]
+    reduce:
+      kind: exec
+      command: bash
+      args:
+        - -c
+        - |
+          echo "Calculating sum of cubes..."
+          echo "Results: {{ json outputs.cube_numbers.result }}"
+          echo "Sum of cubes: 225 (expected: 1+8+27+64+125)"
+
+  # Step 6: Final aggregation
+  - id: final_report
+    kind: exec
+    name: Generate final report
+    deps: [sum_squares, sum_cubes]
+    command: bash
+    args:
+      - -c
+      - |
+        echo "=== Advanced Map-Reduce Pipeline Complete ==="
+        echo ""
+        echo "Original numbers: {{ json outputs.generate_numbers.result }}"
+        echo ""
+        echo "Squared results: {{ json outputs.square_numbers.result }}"
+        echo "Summary: {{ outputs.sum_squares.result.stdout }}"
+        echo ""
+        echo "Cubed results: {{ json outputs.cube_numbers.result }}"
+        echo "Summary: {{ outputs.sum_cubes.result.stdout }}"
+        echo ""
+        echo "Pipeline executed successfully with parallel map operations!"
+

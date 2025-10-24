@@ -1,0 +1,61 @@
+version: 1
+name: Map-Reduce Example Workflow
+concurrency: 6
+vars:
+  data_file: "files.json"
+
+nodes:
+  # Step 1: Create an array of file names
+  - id: create_files
+    kind: exec
+    name: Create list of files to process
+    command: bash
+    args:
+      - -c
+      - |
+        echo '["file1.txt", "file2.txt", "file3.txt"]' > {{ vars.data_file }}
+    produces:
+      files: ["{{ vars.data_file }}"]
+      json:
+        resultFromFile: "{{ vars.data_file }}"
+    deterministic: true
+
+  # Step 2: Map - Process each file (create and count words)
+  - id: process_files
+    kind: map
+    name: Process each file
+    deps: [create_files]
+    over: "{{ outputs.create_files.result }}"
+    map:
+      kind: exec
+      command: bash
+      args:
+        - -c
+        - |
+          # Create a file with some content
+          echo "Processing {{ item }}" > {{ item }}
+          # Count words in the file
+          wc -w < {{ item }}
+
+  # Step 3: Reduce - Aggregate results
+  - id: aggregate_results
+    kind: reduce
+    name: Aggregate all file processing results
+    deps: [process_files]
+    reduce:
+      kind: exec
+      command: bash
+      args:
+        - -c
+        - |
+          echo "All file processing complete!"
+          echo "Map results: {{ json outputs.process_files.result }}"
+
+  # Step 4: Display final result
+  - id: display_result
+    kind: exec
+    name: Display final result
+    deps: [aggregate_results]
+    command: echo
+    args: ["Workflow completed successfully!"]
+
